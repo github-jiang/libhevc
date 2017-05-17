@@ -1308,6 +1308,12 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
 
 
     ps_sps = (ps_codec->s_parse.ps_sps_base + MAX_SPS_CNT - 1);
+    /* Reset SPS to zero */
+    {
+        WORD16 *pi2_scaling_mat = ps_sps->pi2_scaling_mat;
+        memset(ps_sps, 0, sizeof(sps_t));
+        ps_sps->pi2_scaling_mat = pi2_scaling_mat;
+    }
     ps_sps->i1_sps_id = sps_id;
     ps_sps->i1_vps_id = vps_id;
     ps_sps->i1_sps_max_sub_layers = sps_max_sub_layers;
@@ -2053,6 +2059,9 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
     ps_pps->i1_slice_header_extension_present_flag = value;
     /* Not present in HM */
     BITS_PARSE("pps_extension_flag", value, ps_bitstrm, 1);
+
+    if((UWORD8 *)ps_bitstrm->pu4_buf > ps_bitstrm->pu1_buf_max)
+        return IHEVCD_INVALID_PARAMETER;
 
     ps_codec->i4_pps_done = 1;
     return ret;
