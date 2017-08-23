@@ -1460,6 +1460,10 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
 
     BITS_PARSE("sps_extension_flag", value, ps_bitstrm, 1);
 
+    if((UWORD8 *)ps_bitstrm->pu4_buf > ps_bitstrm->pu1_buf_max)
+    {
+        return IHEVCD_INVALID_PARAMETER;
+    }
 
     {
         WORD32 numerator;
@@ -1749,6 +1753,12 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
     ps_pps->i1_loop_filter_across_tiles_enabled_flag = 0;
     if(ps_pps->i1_tiles_enabled_flag)
     {
+        WORD32 wd = ALIGN64(ps_codec->i4_wd);
+        WORD32 ht = ALIGN64(ps_codec->i4_ht);
+
+        WORD32 max_tile_cols = (wd + MIN_TILE_WD - 1) / MIN_TILE_WD;
+        WORD32 max_tile_rows = (ht + MIN_TILE_HT - 1) / MIN_TILE_HT;
+
         UEV_PARSE("num_tile_columns_minus1", value, ps_bitstrm);
         ps_pps->i1_num_tile_columns = value + 1;
 
@@ -1756,9 +1766,9 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
         ps_pps->i1_num_tile_rows = value + 1;
 
         if((ps_pps->i1_num_tile_columns < 1) ||
-                        (ps_pps->i1_num_tile_columns > ps_sps->i2_pic_wd_in_ctb) ||
+                        (ps_pps->i1_num_tile_columns > max_tile_cols) ||
                         (ps_pps->i1_num_tile_rows < 1) ||
-                        (ps_pps->i1_num_tile_rows > ps_sps->i2_pic_ht_in_ctb))
+                        (ps_pps->i1_num_tile_rows > max_tile_rows))
             return IHEVCD_INVALID_HEADER;
 
         BITS_PARSE("uniform_spacing_flag", value, ps_bitstrm, 1);
