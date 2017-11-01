@@ -639,6 +639,8 @@ IHEVCD_ERROR_T ihevcd_mv_buf_mgr_add_bufs(codec_t *ps_codec)
      */
     max_dpb_size++;
 
+    ps_codec->i4_max_dpb_size = max_dpb_size;
+
     pu1_buf = (UWORD8 *)ps_codec->pv_mv_bank_buf_base;
 
     ps_mv_buf = (mv_buf_t *)pu1_buf;
@@ -701,6 +703,103 @@ IHEVCD_ERROR_T ihevcd_mv_buf_mgr_add_bufs(codec_t *ps_codec)
 *******************************************************************************
 *
 * @brief
+*  Output buffer check
+*
+* @par Description:
+*  Check for the number of buffers and buffer sizes of output buffer
+*
+* @param[in] ps_codec
+*  Pointer to codec context
+*
+* @returns  Error from IHEVCD_ERROR_T
+*
+* @remarks
+*
+*
+*******************************************************************************
+*/
+IHEVCD_ERROR_T ihevcd_check_out_buf_size(codec_t *ps_codec)
+{
+    ivd_out_bufdesc_t *ps_out_buffer = ps_codec->ps_out_buffer;
+    UWORD32 au4_min_out_buf_size[IVD_VIDDEC_MAX_IO_BUFFERS];
+    UWORD32 u4_min_num_out_bufs = 0, i;
+    UWORD32 wd, ht;
+
+    if(0 == ps_codec->i4_share_disp_buf)
+    {
+        wd = ps_codec->i4_disp_wd;
+        ht = ps_codec->i4_disp_ht;
+    }
+    else
+    {
+        /* In case of shared mode, do not check validity of ps_codec->ps_out_buffer */
+        return (IHEVCD_ERROR_T)IHEVCD_SUCCESS;
+    }
+
+    if(ps_codec->e_chroma_fmt == IV_YUV_420P)
+        u4_min_num_out_bufs = MIN_OUT_BUFS_420;
+    else if(ps_codec->e_chroma_fmt == IV_YUV_422ILE)
+        u4_min_num_out_bufs = MIN_OUT_BUFS_422ILE;
+    else if(ps_codec->e_chroma_fmt == IV_RGB_565)
+        u4_min_num_out_bufs = MIN_OUT_BUFS_RGB565;
+    else if(ps_codec->e_chroma_fmt == IV_RGBA_8888)
+        u4_min_num_out_bufs = MIN_OUT_BUFS_RGBA8888;
+    else if((ps_codec->e_chroma_fmt == IV_YUV_420SP_UV)
+                    || (ps_codec->e_chroma_fmt == IV_YUV_420SP_VU))
+        u4_min_num_out_bufs = MIN_OUT_BUFS_420SP;
+
+    if(ps_codec->e_chroma_fmt == IV_YUV_420P)
+    {
+        au4_min_out_buf_size[0] = (wd * ht);
+        au4_min_out_buf_size[1] = (wd * ht) >> 2;
+        au4_min_out_buf_size[2] = (wd * ht) >> 2;
+    }
+    else if(ps_codec->e_chroma_fmt == IV_YUV_422ILE)
+    {
+        au4_min_out_buf_size[0] = (wd * ht) * 2;
+        au4_min_out_buf_size[1] =
+                        au4_min_out_buf_size[2] = 0;
+    }
+    else if(ps_codec->e_chroma_fmt == IV_RGB_565)
+    {
+        au4_min_out_buf_size[0] = (wd * ht) * 2;
+        au4_min_out_buf_size[1] =
+                        au4_min_out_buf_size[2] = 0;
+    }
+    else if(ps_codec->e_chroma_fmt == IV_RGBA_8888)
+    {
+        au4_min_out_buf_size[0] = (wd * ht) * 4;
+        au4_min_out_buf_size[1] =
+                        au4_min_out_buf_size[2] = 0;
+    }
+    else if((ps_codec->e_chroma_fmt == IV_YUV_420SP_UV)
+                    || (ps_codec->e_chroma_fmt == IV_YUV_420SP_VU))
+    {
+        au4_min_out_buf_size[0] = (wd * ht);
+        au4_min_out_buf_size[1] = (wd * ht) >> 1;
+        au4_min_out_buf_size[2] = 0;
+    }
+
+    if(ps_out_buffer->u4_num_bufs < u4_min_num_out_bufs)
+    {
+        return (IHEVCD_ERROR_T)IV_FAIL;
+    }
+
+    for (i = 0 ; i < u4_min_num_out_bufs; i++)
+    {
+        if(ps_out_buffer->u4_min_out_buf_size[i] < au4_min_out_buf_size[i])
+        {
+            return (IHEVCD_ERROR_T)IV_FAIL;
+        }
+    }
+
+    return (IHEVCD_ERROR_T)IHEVCD_SUCCESS;
+}
+
+/**
+*******************************************************************************
+*
+* @brief
 *  Picture level initializations required during parsing
 *
 * @par Description:
@@ -733,8 +832,6 @@ IHEVCD_ERROR_T ihevcd_parse_pic_init(codec_t *ps_codec)
     ps_codec->s_parse.i4_error_code = IHEVCD_SUCCESS;
     ps_sps = ps_codec->s_parse.ps_sps;
     ps_slice_hdr = ps_codec->s_parse.ps_slice_hdr;
-    /* If parse_pic_init is called, then slice data is present in the input bitstrea stream */
-    ps_codec->i4_pic_present = 1;
 
     /* Memset picture level intra map and transquant bypass map to zero */
     num_min_cu = ((ps_sps->i2_pic_height_in_luma_samples + 7) / 8) * ((ps_sps->i2_pic_width_in_luma_samples + 63) / 64);
@@ -753,6 +850,10 @@ IHEVCD_ERROR_T ihevcd_parse_pic_init(codec_t *ps_codec)
 
         ps_codec->s_parse.i4_first_pic_init = 1;
     }
+
+    /* Output buffer check */
+    ret = ihevcd_check_out_buf_size(ps_codec);
+    RETURN_IF((ret != (IHEVCD_ERROR_T)IHEVCD_SUCCESS), ret);
 
     /* Initialize all the slice headers' slice addresses to zero */
     {
@@ -1218,6 +1319,8 @@ IHEVCD_ERROR_T ihevcd_parse_pic_init(codec_t *ps_codec)
         }
     }
 
+    /* If parse_pic_init is called, then slice data is present in the input bitstrea stream */
+    ps_codec->i4_pic_present = 1;
 
     return ret;
 }

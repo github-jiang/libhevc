@@ -643,6 +643,9 @@ static WORD32 ihevcd_parse_hrd_parameters(bitstrm_t *ps_bitstrm,
         if(!ps_hrd->au1_low_delay_hrd_flag[i])
             UEV_PARSE("cpb_cnt_minus1[ i ]", ps_hrd->au1_cpb_cnt_minus1[i], ps_bitstrm);
 
+        if(ps_hrd->au1_cpb_cnt_minus1[i] >= (MAX_CPB_CNT - 1))
+            return IHEVCD_INVALID_PARAMETER;
+
         if(ps_hrd->u1_nal_hrd_parameters_present_flag)
             ihevcd_parse_sub_layer_hrd_parameters(ps_bitstrm,
                                                   &ps_hrd->as_sub_layer_hrd_params[i],
@@ -818,7 +821,10 @@ static WORD32 ihevcd_parse_vui_parameters(bitstrm_t *ps_bitstrm,
 
         BITS_PARSE("vui_hrd_parameters_present_flag", ps_vui->u1_vui_hrd_parameters_present_flag, ps_bitstrm, 1);
         if(ps_vui->u1_vui_hrd_parameters_present_flag)
-            ihevcd_parse_hrd_parameters(ps_bitstrm, &ps_vui->s_vui_hrd_parameters, 1, sps_max_sub_layers_minus1);
+        {
+            ret = ihevcd_parse_hrd_parameters(ps_bitstrm, &ps_vui->s_vui_hrd_parameters, 1, sps_max_sub_layers_minus1);
+            RETURN_IF((ret != (IHEVCD_ERROR_T)IHEVCD_SUCCESS), ret);
+        }
     }
 
     BITS_PARSE("bitstream_restriction_flag", ps_vui->u1_bitstream_restriction_flag, ps_bitstrm, 1);
@@ -1271,6 +1277,7 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
     sps_t *ps_sps;
     profile_tier_lvl_info_t s_ptl;
     bitstrm_t *ps_bitstrm = &ps_codec->s_parse.s_bitstrm;
+    WORD32 ctb_log2_size_y = 0;
 
 
     BITS_PARSE("video_parameter_set_id", value, ps_bitstrm, 4);
@@ -1301,6 +1308,12 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
 
 
     ps_sps = (ps_codec->s_parse.ps_sps_base + MAX_SPS_CNT - 1);
+    /* Reset SPS to zero */
+    {
+        WORD16 *pi2_scaling_mat = ps_sps->pi2_scaling_mat;
+        memset(ps_sps, 0, sizeof(sps_t));
+        ps_sps->pi2_scaling_mat = pi2_scaling_mat;
+    }
     ps_sps->i1_sps_id = sps_id;
     ps_sps->i1_vps_id = vps_id;
     ps_sps->i1_sps_max_sub_layers = sps_max_sub_layers;
@@ -1350,15 +1363,31 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
     {
 
         UEV_PARSE("pic_crop_left_offset", value, ps_bitstrm);
+        if (value >= ps_sps->i2_pic_width_in_luma_samples)
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
         ps_sps->i2_pic_crop_left_offset = value;
 
         UEV_PARSE("pic_crop_right_offset", value, ps_bitstrm);
+        if (value >= ps_sps->i2_pic_width_in_luma_samples)
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
         ps_sps->i2_pic_crop_right_offset = value;
 
         UEV_PARSE("pic_crop_top_offset", value, ps_bitstrm);
+        if (value >= ps_sps->i2_pic_height_in_luma_samples)
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
         ps_sps->i2_pic_crop_top_offset = value;
 
         UEV_PARSE("pic_crop_bottom_offset", value, ps_bitstrm);
+        if (value >= ps_sps->i2_pic_height_in_luma_samples)
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
         ps_sps->i2_pic_crop_bottom_offset = value;
     }
     else
@@ -1391,8 +1420,18 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
         UEV_PARSE("max_dec_pic_buffering", value, ps_bitstrm);
         ps_sps->ai1_sps_max_dec_pic_buffering[i] = value + 1;
 
+        if(ps_sps->ai1_sps_max_dec_pic_buffering[i] > MAX_DPB_SIZE)
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
+
         UEV_PARSE("num_reorder_pics", value, ps_bitstrm);
         ps_sps->ai1_sps_max_num_reorder_pics[i] = value;
+
+        if(ps_sps->ai1_sps_max_num_reorder_pics[i] > ps_sps->ai1_sps_max_dec_pic_buffering[i])
+        {
+            return IHEVCD_INVALID_PARAMETER;
+        }
 
         UEV_PARSE("max_latency_increase", value, ps_bitstrm);
         ps_sps->ai1_sps_max_latency_increase[i] = value;
@@ -1424,6 +1463,8 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
     UEV_PARSE("log2_diff_max_min_coding_block_size", value, ps_bitstrm);
     ps_sps->i1_log2_diff_max_min_coding_block_size = value;
 
+    ctb_log2_size_y = ps_sps->i1_log2_min_coding_block_size + ps_sps->i1_log2_diff_max_min_coding_block_size;
+
     UEV_PARSE("log2_min_transform_block_size_minus2", value, ps_bitstrm);
     ps_sps->i1_log2_min_transform_block_size = value + 2;
 
@@ -1432,6 +1473,12 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
 
     ps_sps->i1_log2_max_transform_block_size = ps_sps->i1_log2_min_transform_block_size +
                     ps_sps->i1_log2_diff_max_min_transform_block_size;
+
+    if ((ps_sps->i1_log2_max_transform_block_size < 0) ||
+                    (ps_sps->i1_log2_max_transform_block_size > MIN(ctb_log2_size_y, 5)))
+    {
+        return IHEVCD_INVALID_PARAMETER;
+    }
 
     ps_sps->i1_log2_ctb_size = ps_sps->i1_log2_min_coding_block_size +
                     ps_sps->i1_log2_diff_max_min_coding_block_size;
@@ -1536,12 +1583,19 @@ IHEVCD_ERROR_T ihevcd_parse_sps(codec_t *ps_codec)
     ps_sps->i1_vui_parameters_present_flag = value;
 
     if(ps_sps->i1_vui_parameters_present_flag)
-        ihevcd_parse_vui_parameters(ps_bitstrm,
-                                    &ps_sps->s_vui_parameters,
-                                    ps_sps->i1_sps_max_sub_layers - 1);
+    {
+        ret = ihevcd_parse_vui_parameters(ps_bitstrm,
+                                          &ps_sps->s_vui_parameters,
+                                          ps_sps->i1_sps_max_sub_layers - 1);
+        RETURN_IF((ret != (IHEVCD_ERROR_T)IHEVCD_SUCCESS), ret);
+    }
 
     BITS_PARSE("sps_extension_flag", value, ps_bitstrm, 1);
 
+    if((UWORD8 *)ps_bitstrm->pu4_buf > ps_bitstrm->pu1_buf_max)
+    {
+        return IHEVCD_INVALID_PARAMETER;
+    }
 
     {
         WORD32 numerator;
@@ -1832,12 +1886,31 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
     BITS_PARSE("tiles_enabled_flag", value, ps_bitstrm, 1);
     ps_pps->i1_tiles_enabled_flag = value;
 
+    /* When tiles are enabled and width or height is >= 4096,
+     * CTB Size should at least be 32. 16x16 CTBs can result
+     * in tile position greater than 255 for 4096,
+     * which decoder does not support.
+     */
+    if((ps_pps->i1_tiles_enabled_flag) &&
+                    (ps_sps->i1_log2_ctb_size == 4) &&
+                    ((ps_sps->i2_pic_width_in_luma_samples >= 4096) ||
+                    (ps_sps->i2_pic_height_in_luma_samples >= 4096)))
+    {
+        return IHEVCD_INVALID_HEADER;
+    }
+
     BITS_PARSE("entropy_coding_sync_enabled_flag", value, ps_bitstrm, 1);
     ps_pps->i1_entropy_coding_sync_enabled_flag = value;
 
     ps_pps->i1_loop_filter_across_tiles_enabled_flag = 0;
     if(ps_pps->i1_tiles_enabled_flag)
     {
+        WORD32 wd = ALIGN64(ps_codec->i4_wd);
+        WORD32 ht = ALIGN64(ps_codec->i4_ht);
+
+        WORD32 max_tile_cols = (wd + MIN_TILE_WD - 1) / MIN_TILE_WD;
+        WORD32 max_tile_rows = (ht + MIN_TILE_HT - 1) / MIN_TILE_HT;
+
         UEV_PARSE("num_tile_columns_minus1", value, ps_bitstrm);
         ps_pps->i1_num_tile_columns = value + 1;
 
@@ -1845,9 +1918,9 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
         ps_pps->i1_num_tile_rows = value + 1;
 
         if((ps_pps->i1_num_tile_columns < 1) ||
-                        (ps_pps->i1_num_tile_columns > ps_sps->i2_pic_wd_in_ctb) ||
+                        (ps_pps->i1_num_tile_columns > max_tile_cols) ||
                         (ps_pps->i1_num_tile_rows < 1) ||
-                        (ps_pps->i1_num_tile_rows > ps_sps->i2_pic_ht_in_ctb))
+                        (ps_pps->i1_num_tile_rows > max_tile_rows))
             return IHEVCD_INVALID_HEADER;
 
         BITS_PARSE("uniform_spacing_flag", value, ps_bitstrm, 1);
@@ -2002,6 +2075,9 @@ IHEVCD_ERROR_T ihevcd_parse_pps(codec_t *ps_codec)
     ps_pps->i1_slice_header_extension_present_flag = value;
     /* Not present in HM */
     BITS_PARSE("pps_extension_flag", value, ps_bitstrm, 1);
+
+    if((UWORD8 *)ps_bitstrm->pu4_buf > ps_bitstrm->pu1_buf_max)
+        return IHEVCD_INVALID_PARAMETER;
 
     ps_codec->i4_pps_done = 1;
     return ret;
