@@ -17,51 +17,7 @@
  *****************************************************************************
  * Originally developed and contributed by Ittiam Systems Pvt. Ltd, Bangalore
  */
-/*
- * Fuzzer for libhevc decoder
- * ==========================
- * Requirements
- * --------------
- * Requires Clang 6.0 or above (needs to support -fsanitize=fuzzer,
- * -fsanitize=fuzzer-no-link)
- *
 
- * Steps to build
- * --------------
- * Clone libhevc repository
-   $ git clone https://android.googlesource.com/platform/external/libhevc
-
- * Create a directory inside libhevc and change directory
-   $ cd libhevc
-   $ mkdir hevc_dec_fuzzer
-   $ cd hevc_dec_fuzzer/
-
- * Build libavc using cmake.
-   $ CC=clang CXX=clang++ cmake ../ \
-     -DSANITIZE=fuzzer-no-link,address,signed-integer-overflow
-
- * Build libhevcdec
-   $ make -j32
-
- * Build hevc fuzzer
-   $ clang++ -std=c++11 -fsanitize=fuzzer,address -I.  -I../ \
-   -I../common -I../decoder -Wl,--start-group \
-   ../fuzzer/hevc_dec_fuzzer.cpp -o ./hevc_dec_fuzzer \
-   ./libhevcdec.a -Wl,--end-group
-
- * create a corpus directory and copy some elementary hevc files there.
- * Empty corpus directoy also is acceptable, though not recommended
-   $ mkdir CORPUS && cp some-files CORPUS
-
- * Run fuzzing:
-   $ ./hevc_dec_fuzzer CORPUS
-
- * References:
- * http://llvm.org/docs/LibFuzzer.html
- * https://github.com/google/oss-fuzz
- */
-
-#include <malloc.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -92,8 +48,12 @@ enum {
 const static int kSupportedColorFormats = NELEMENTS(supportedColorFormats);
 const static int kMaxCores = 4;
 void *iv_aligned_malloc(void *ctxt, WORD32 alignment, WORD32 size) {
+  void *buf = NULL;
   (void)ctxt;
-  return memalign(alignment, size);
+  if (0 != posix_memalign(&buf, alignment, size)) {
+      return NULL;
+  }
+  return buf;
 }
 
 void iv_aligned_free(void *ctxt, void *buf) {
@@ -264,7 +224,7 @@ void Codec::allocFrame() {
   mOutBufHandle.u4_num_bufs = num_bufs;
   for (int i = 0; i < num_bufs; i++) {
     mOutBufHandle.u4_min_out_buf_size[i] = sizes[i];
-    mOutBufHandle.pu1_bufs[i] = (UWORD8 *)memalign(16, sizes[i]);
+    mOutBufHandle.pu1_bufs[i] = (UWORD8 *)iv_aligned_malloc(NULL, 16, sizes[i]);
   }
 }
 
