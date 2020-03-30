@@ -60,6 +60,7 @@
 /* Constant Macros                                                           */
 /*****************************************************************************/
 #define DYN_BITRATE_TEST 0
+#define FORCE_IDR_TEST 0
 
 /*****************************************************************************/
 /* Global definitions                                                        */
@@ -799,7 +800,10 @@ IHEVCE_PLUGIN_STATUS_T allocate_input(appl_ctxt_t *ps_ctxt, ihevce_inp_buf_t *in
 #ifdef X86_MINGW
     pu1_buf = (UWORD8 *)_aligned_malloc(pic_size, 64);
 #else
-    posix_memalign((void **)&pu1_buf, 64, pic_size);
+    if (0 != posix_memalign((void **)&pu1_buf, 64, pic_size))
+    {
+        return (IHEVCE_EFAIL);
+    }
 #endif
     if(NULL == pu1_buf)
     {
@@ -836,8 +840,8 @@ IHEVCE_PLUGIN_STATUS_T allocate_input(appl_ctxt_t *ps_ctxt, ihevce_inp_buf_t *in
 
     inp_pic->i4_curr_bitrate = params->s_tgt_lyr_prms.as_tgt_params[0].ai4_tgt_bitrate[0];
     inp_pic->i4_curr_peak_bitrate = params->s_tgt_lyr_prms.as_tgt_params[0].ai4_peak_bitrate[0];
-    inp_pic->i4_curr_rate_factor = params->s_config_prms.i4_rate_factor;
     inp_pic->u8_pts = 0;
+    inp_pic->i4_force_idr_flag = 0;
 
     return IHEVCE_EOK;
 }
@@ -1019,6 +1023,8 @@ IHEVCE_PLUGIN_STATUS_T libihevce_encode_frame(appl_ctxt_t *ps_ctxt, FILE *pf_inp
     {
         ihevce_inp_buf_t *ps_inp_pic = &inp_pic;
 
+        ps_inp_pic->i4_force_idr_flag = 0;
+
         if(i4_num_frames < params->s_config_prms.i4_num_frms_to_encode)
         {
             status = read_input(ps_ctxt, pf_inp_yuv, &inp_pic);
@@ -1035,6 +1041,12 @@ IHEVCE_PLUGIN_STATUS_T libihevce_encode_frame(appl_ctxt_t *ps_ctxt, FILE *pf_inp
         if((i4_num_frames == 200) && (ps_inp_pic != NULL))
         {
             ps_inp_pic->i4_curr_bitrate = ps_inp_pic->i4_curr_bitrate << 1;
+        }
+#endif
+#if FORCE_IDR_TEST
+        if((i4_num_frames == 70) && (ps_inp_pic != NULL))
+        {
+            ps_inp_pic->i4_force_idr_flag = 1;
         }
 #endif
         /* call encoder process frame */
